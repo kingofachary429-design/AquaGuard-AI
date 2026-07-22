@@ -1,19 +1,60 @@
 import { useEffect, useState } from "react";
+import { onAuthStateChanged } from "firebase/auth";
 import {
   collection,
+  doc,
+  getDoc,
   limit,
   onSnapshot,
   orderBy,
   query,
+  serverTimestamp,
+  updateDoc,
 } from "firebase/firestore";
-import { db } from "../firebase";
+
+import { auth, db } from "../firebase";
 
 export default function RecentReports() {
   const [reports, setReports] = useState([]);
   const [selectedReport, setSelectedReport] = useState(null);
+
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
+  const [userRole, setUserRole] = useState("citizen");
+  const [selectedStatus, setSelectedStatus] = useState("");
+  const [selectedRisk, setSelectedRisk] = useState("");
+
+  const [updating, setUpdating] = useState(false);
+  const [updateMessage, setUpdateMessage] = useState("");
+
+  // Current user role fetch
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        setUserRole("citizen");
+        return;
+      }
+
+      try {
+        const userReference = doc(db, "users", user.uid);
+        const userSnapshot = await getDoc(userReference);
+
+        if (userSnapshot.exists()) {
+          setUserRole(userSnapshot.data().role || "citizen");
+        } else {
+          setUserRole("citizen");
+        }
+      } catch (error) {
+        console.error("Unable to load user role:", error);
+        setUserRole("citizen");
+      }
+    });
+
+    return () => unsubscribeAuth();
+  }, []);
+
+  // Firestore reports fetch
   useEffect(() => {
     const reportsQuery = query(
       collection(db, "pollutionReports"),
@@ -43,6 +84,7 @@ export default function RecentReports() {
     return () => unsubscribe();
   }, []);
 
+  // Escape button closes modal
   useEffect(() => {
     const handleEscapeKey = (event) => {
       if (event.key === "Escape") {
@@ -64,7 +106,10 @@ export default function RecentReports() {
       return "border-emerald-500/30 bg-emerald-500/10 text-emerald-400";
     }
 
-    if (normalizedStatus === "high risk") {
+    if (
+      normalizedStatus === "action required" ||
+      normalizedStatus === "rejected"
+    ) {
       return "border-red-500/30 bg-red-500/10 text-red-400";
     }
 
@@ -79,22 +124,23 @@ export default function RecentReports() {
     const normalizedRisk = riskLevel?.toLowerCase();
 
     if (
-      normalizedRisk === "high" ||
-      normalizedRisk === "high risk"
+      normalizedRisk === "critical risk" ||
+      normalizedRisk === "high risk" ||
+      normalizedRisk === "high"
     ) {
       return "text-red-400";
     }
 
     if (
-      normalizedRisk === "medium" ||
-      normalizedRisk === "medium risk"
+      normalizedRisk === "medium risk" ||
+      normalizedRisk === "medium"
     ) {
       return "text-amber-400";
     }
 
     if (
-      normalizedRisk === "low" ||
-      normalizedRisk === "low risk"
+      normalizedRisk === "low risk" ||
+      normalizedRisk === "low"
     ) {
       return "text-emerald-400";
     }
@@ -130,6 +176,78 @@ export default function RecentReports() {
     return Number.isNaN(numberValue)
       ? coordinate
       : numberValue.toFixed(6);
+  };
+
+  const openReportDetails = (report) => {
+    setSelectedReport(report);
+    setSelectedStatus(report.status || "Pending");
+    setSelectedRisk(report.riskLevel || "Under Review");
+    setUpdateMessage("");
+  };
+
+  const closeReportDetails = () => {
+    setSelectedReport(null);
+    setSelectedStatus("");
+    setSelectedRisk("");
+    setUpdateMessage("");
+  };
+
+  const handleReportUpdate = async () => {
+    if (!selectedReport) {
+      setUpdateMessage("No report was selected.");
+      return;
+    }
+
+    if (userRole !== "admin") {
+      setUpdateMessage("Only an administrator can update reports.");
+      return;
+    }
+
+    if (!selectedStatus || !selectedRisk) {
+      setUpdateMessage("Please select status and risk level.");
+      return;
+    }
+
+    try {
+      setUpdating(true);
+      setUpdateMessage("");
+
+      const reportReference = doc(
+        db,
+        "pollutionReports",
+        selectedReport.id
+      );
+
+      await updateDoc(reportReference, {
+        status: selectedStatus,
+        riskLevel: selectedRisk,
+        updatedAt: serverTimestamp(),
+        updatedBy: auth.currentUser?.uid || "",
+        updatedByEmail: auth.currentUser?.email || "",
+      });
+
+      setSelectedReport((previousReport) => ({
+        ...previousReport,
+        status: selectedStatus,
+        riskLevel: selectedRisk,
+      }));
+
+      setUpdateMessage("Report updated successfully.");
+    } catch (error) {
+      console.error("Unable to update report:", error);
+
+      if (error.code === "permission-denied") {
+        setUpdateMessage(
+          "Permission denied. Check your admin role and Firestore rules."
+        );
+      } else {
+        setUpdateMessage(
+          "Unable to update the report. Please try again."
+        );
+      }
+    } finally {
+      setUpdating(false);
+    }
   };
 
   return (
@@ -190,15 +308,33 @@ export default function RecentReports() {
             <table className="min-w-full">
               <thead className="bg-slate-950/60">
                 <tr className="text-left text-xs uppercase tracking-wider text-slate-400">
-                  <th className="px-6 py-4 font-semibold">River</th>
+                  <th className="px-6 py-4 font-semibold">
+                    River
+                  </th>
+
                   <th className="px-6 py-4 font-semibold">
                     Pollution Type
                   </th>
-                  <th className="px-6 py-4 font-semibold">Location</th>
-                  <th className="px-6 py-4 font-semibold">Risk Level</th>
-                  <th className="px-6 py-4 font-semibold">Status</th>
-                  <th className="px-6 py-4 font-semibold">Date</th>
-                  <th className="px-6 py-4 font-semibold">Action</th>
+
+                  <th className="px-6 py-4 font-semibold">
+                    Location
+                  </th>
+
+                  <th className="px-6 py-4 font-semibold">
+                    Risk Level
+                  </th>
+
+                  <th className="px-6 py-4 font-semibold">
+                    Status
+                  </th>
+
+                  <th className="px-6 py-4 font-semibold">
+                    Date
+                  </th>
+
+                  <th className="px-6 py-4 font-semibold">
+                    Action
+                  </th>
                 </tr>
               </thead>
 
@@ -251,7 +387,7 @@ export default function RecentReports() {
                     <td className="whitespace-nowrap px-6 py-4">
                       <button
                         type="button"
-                        onClick={() => setSelectedReport(report)}
+                        onClick={() => openReportDetails(report)}
                         className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-sm font-semibold text-cyan-300 transition hover:bg-cyan-500/20"
                       >
                         View Details
@@ -268,7 +404,7 @@ export default function RecentReports() {
       {selectedReport && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-8 backdrop-blur-sm"
-          onClick={() => setSelectedReport(null)}
+          onClick={closeReportDetails}
         >
           <div
             className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl"
@@ -287,7 +423,7 @@ export default function RecentReports() {
 
               <button
                 type="button"
-                onClick={() => setSelectedReport(null)}
+                onClick={closeReportDetails}
                 className="rounded-lg bg-slate-800 px-3 py-2 text-slate-300 transition hover:bg-slate-700 hover:text-white"
                 aria-label="Close report details"
               >
@@ -303,7 +439,9 @@ export default function RecentReports() {
 
               <DetailItem
                 label="Pollution Type"
-                value={selectedReport.pollutionType || "Not specified"}
+                value={
+                  selectedReport.pollutionType || "Not specified"
+                }
               />
 
               <DetailItem
@@ -361,12 +499,122 @@ export default function RecentReports() {
                   </p>
                 </div>
               </div>
+
+              {userRole === "admin" && (
+                <div className="sm:col-span-2 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-5">
+                  <div className="mb-4">
+                    <p className="text-sm font-semibold uppercase tracking-wider text-cyan-400">
+                      Admin Controls
+                    </p>
+
+                    <h3 className="mt-1 text-lg font-bold text-white">
+                      Update Report Assessment
+                    </h3>
+
+                    <p className="mt-1 text-sm text-slate-400">
+                      Change the investigation status and pollution
+                      risk level.
+                    </p>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <label
+                        htmlFor="report-status"
+                        className="mb-2 block text-sm font-medium text-slate-300"
+                      >
+                        Report Status
+                      </label>
+
+                      <select
+                        id="report-status"
+                        value={selectedStatus}
+                        onChange={(event) =>
+                          setSelectedStatus(event.target.value)
+                        }
+                        className="w-full rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-cyan-500"
+                      >
+                        <option value="Pending">Pending</option>
+                        <option value="Under Review">
+                          Under Review
+                        </option>
+                        <option value="Action Required">
+                          Action Required
+                        </option>
+                        <option value="Resolved">
+                          Resolved
+                        </option>
+                        <option value="Rejected">
+                          Rejected
+                        </option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="risk-level"
+                        className="mb-2 block text-sm font-medium text-slate-300"
+                      >
+                        Pollution Risk Level
+                      </label>
+
+                      <select
+                        id="risk-level"
+                        value={selectedRisk}
+                        onChange={(event) =>
+                          setSelectedRisk(event.target.value)
+                        }
+                        className="w-full rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-cyan-500"
+                      >
+                        <option value="Under Review">
+                          Under Review
+                        </option>
+                        <option value="Low Risk">
+                          Low Risk
+                        </option>
+                        <option value="Medium Risk">
+                          Medium Risk
+                        </option>
+                        <option value="High Risk">
+                          High Risk
+                        </option>
+                        <option value="Critical Risk">
+                          Critical Risk
+                        </option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {updateMessage && (
+                    <div
+                      className={`mt-4 rounded-lg border p-3 text-sm ${
+                        updateMessage.includes("successfully")
+                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                          : "border-red-500/30 bg-red-500/10 text-red-300"
+                      }`}
+                    >
+                      {updateMessage}
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={handleReportUpdate}
+                    disabled={updating}
+                    className="mt-5 rounded-lg bg-cyan-500 px-5 py-3 font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {updating
+                      ? "Updating Report..."
+                      : "Update Report"}
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end border-t border-slate-800 px-6 py-5">
               <button
                 type="button"
-                onClick={() => setSelectedReport(null)}
+                onClick={closeReportDetails}
                 className="rounded-lg bg-cyan-500 px-5 py-2.5 font-semibold text-slate-950 transition hover:bg-cyan-400"
               >
                 Close
