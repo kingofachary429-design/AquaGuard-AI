@@ -1,10 +1,12 @@
 import { signOut } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
+
 import { auth } from "../firebase";
 
+import EmergencyAlert from "../components/EmergencyAlert";
 import DashboardStats from "../components/DashboardStats";
-import CitizenReport from "../components/CitizenReport";
 import RecentReports from "../components/RecentReports";
+import CitizenReport from "../components/CitizenReport";
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -44,6 +46,7 @@ export default function Dashboard() {
             </div>
 
             <button
+              type="button"
               onClick={handleLogout}
               className="rounded-lg bg-red-500 px-5 py-2 font-semibold transition hover:bg-red-600"
             >
@@ -64,13 +67,20 @@ export default function Dashboard() {
           </h2>
 
           <p className="mt-3 max-w-3xl text-slate-300">
-            Monitor river pollution reports, analyze risk levels and
-            contribute to environmental protection through citizen reporting.
+            Monitor river pollution reports, analyze risk levels,
+            and contribute to environmental protection through
+            citizen reporting.
           </p>
         </section>
 
+        <div className="mt-8">
+          <EmergencyAlert />
+        </div>
+
         <DashboardStats />
+
         <RecentReports />
+
         <CitizenReport />
       </main>
     </div>
