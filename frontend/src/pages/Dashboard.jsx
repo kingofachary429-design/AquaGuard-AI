@@ -4,6 +4,7 @@ import { auth } from "../firebase";
 
 import DashboardStats from "../components/DashboardStats";
 import CitizenReport from "../components/CitizenReport";
+import RecentReports from "../components/RecentReports";
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -69,7 +70,7 @@ export default function Dashboard() {
         </section>
 
         <DashboardStats />
-
+        <RecentReports />
         <CitizenReport />
       </main>
     </div>
